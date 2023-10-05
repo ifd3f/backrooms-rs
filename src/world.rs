@@ -19,7 +19,6 @@ pub enum Direction {
 #[derive(Debug, Clone)]
 pub struct RaycastParams {
     pub max_dist: usize,
-    pub n_columns: usize,
     /// The projection plane is 1 unit away from the camera. Adjusting this value
     /// allows you to adjust the FOV.
     pub projection_plane_width: f32,
@@ -33,6 +32,10 @@ pub struct Raycast {
 }
 
 impl World {
+    pub fn get(&self, pos: (usize, usize)) -> Option<bool> {
+        self.map.get((pos.1, pos.0)).copied()
+    }
+
     /// Perform a single raycast from the given position along the given ray.
     ///
     /// Ray must be a unit vector
@@ -48,7 +51,7 @@ impl World {
             let Some(grid_cell) = march_pos.cast::<usize>() else {
                 return None;
             };
-            match self.map.get((grid_cell.y, grid_cell.x)) {
+            match self.get((grid_cell.x, grid_cell.y)) {
                 Some(true) => {
                     // Found the grid position, perform raycast operation
                     let last_march_pos = pos + ray_unit * (i - 1) as f32;
@@ -77,9 +80,10 @@ impl World {
         &self,
         pos: Vector2<f32>,
         facing_unit: Vector2<f32>,
-        params: RaycastParams,
+        n_rays: usize,
+        params: &RaycastParams,
     ) -> Vec<Option<Raycast>> {
-        let rays = gen_rays(facing_unit, params.projection_plane_width, params.n_columns);
+        let rays = gen_rays(facing_unit, params.projection_plane_width, n_rays);
 
         rays.map(|ray| self.raycast(pos, ray, params.max_dist))
             .collect()
@@ -101,11 +105,6 @@ fn gen_rays(
     let pp_leftmost_point = facing_unit + (projection_plane_width / 2.0) * facing_left;
 
     (0..n_rays).map(move |i| pp_leftmost_point - (i as f32 / n_rays as f32) * facing_unit)
-}
-
-pub fn cos_sin(a: f32) -> Vector2<f32> {
-    let (s, c) = a.sin_cos();
-    vec2(c, s)
 }
 
 impl From<Array2<bool>> for World {
