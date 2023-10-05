@@ -27,10 +27,8 @@ pub struct RaycastParams {
 
 #[derive(Debug, Clone)]
 pub struct Raycast {
-    pub distance: f32,
-    pub ray: Vector2<f32>,
-    pub incident: Vector2<f32>,
-    pub wall: (usize, usize),
+    pub hit_pos: Vector2<f32>,
+    pub wall: Vector2<usize>,
     pub wall_side: Direction,
 }
 
@@ -44,20 +42,25 @@ impl World {
         ray_unit: Vector2<f32>,
         max_dist: usize,
     ) -> Option<Raycast> {
-        for i in 0..max_dist {
-            let ray_full = ray_unit * i as f32;
-            let castpos = pos + ray_full;
-            let Some(gridpos) = castpos.cast::<usize>() else {
+        // Probe for the first filled grid
+        for i in 1..=max_dist {
+            let march_pos = pos + ray_unit * i as f32;
+            let Some(grid_cell) = march_pos.cast::<usize>() else {
                 return None;
             };
-            match self.map.get((gridpos.y, gridpos.x)) {
+            match self.map.get((grid_cell.y, grid_cell.x)) {
                 Some(true) => {
+                    // Found the grid position, perform raycast operation
+                    let last_march_pos = pos + ray_unit * (i - 1) as f32;
+                    let box_offset = last_march_pos.map(|x| x.floor());
+                    let box_pos = last_march_pos - box_offset;
+                    let box_hit_pos = raycast_in_box(box_pos, ray_unit);
+                    let hit_pos = box_hit_pos + box_offset;
+
                     return Some(Raycast {
-                        distance: todo!(),
-                        ray: ray_unit,
-                        incident: todo!(),
-                        wall: todo!(),
-                        wall_side: todo!(),
+                        hit_pos,
+                        wall: grid_cell,
+                        wall_side: box_hit_pos_to_box_side(box_hit_pos),
                     });
                 }
                 Some(false) => continue,
@@ -139,7 +142,6 @@ fn raycast_in_box(pos: Vector2<f32>, ray_unit: Vector2<f32>) -> Vector2<f32> {
     /// are less than or equal to zero.
     #[inline(always)]
     fn towards_origin(pos: Vector2<f32>, ray_unit: Vector2<f32>) -> Vector2<f32> {
-        println!("{:?} {:?}", pos,  ray_unit);
         match (ray_unit.x == 0.0, ray_unit.y == 0.0) {
             (true, true) => panic!("Cannot raycast with zero-valued ray"),
             (true, false) => return vec2(pos.x, 0.0),
@@ -167,6 +169,20 @@ fn raycast_in_box(pos: Vector2<f32>, ray_unit: Vector2<f32>) -> Vector2<f32> {
     }
 
     towards_origin(pos, ray_unit)
+}
+
+fn box_hit_pos_to_box_side(hit: Vector2<f32>) -> Direction {
+    if hit.x == 1.0 {
+        Direction::West
+    } else if hit.x == 0.0 {
+        Direction::East
+    } else if hit.y == 1.0 {
+        Direction::South
+    } else if hit.y == 0.0 {
+        Direction::North
+    } else {
+        panic!("Not a box side!")
+    }
 }
 
 #[cfg(test)]
