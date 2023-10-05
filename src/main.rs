@@ -20,57 +20,63 @@ pub fn main() {
     let backend = CrosstermBackend::new(std::io::stderr());
     let mut terminal = Terminal::new(backend).expect("Failed to set up terminal");
     let data = array![
-        [1, 1, 3, 1, 1, 1],
-        [0, 2, 0, 3, 0, 1],
-        [0, 1, 0, 0, 0, 1],
-        [0, 2, 0, 1, 0, 0],
-        [0, 0, 0, 0, 0, 0],
-        [1, 2, 1, 0, 2, 1],
+        [1, 1, 3, 1, 1, 1, 1, 1, 1],
+        [3, 0, 0, 0, 0, 0, 0, 0, 2],
+        [1, 0, 0, 0, 0, 0, 0, 0, 1],
+        [2, 0, 0, 0, 0, 0, 3, 0, 1],
+        [1, 0, 0, 0, 0, 0, 0, 0, 1],
+        [1, 2, 1, 1, 1, 1, 1, 2, 1],
     ];
     let world = World::from(data.map(|x| *x != 0));
 
     let params = RaycastParams {
-        max_dist: 10,
-        projection_plane_width: 2.0,
+        max_dist: 20,
+        projection_plane_width: 1.0,
     };
     terminal::enable_raw_mode().unwrap();
     crossterm::execute!(std::io::stderr(), EnterAlternateScreen, EnableMouseCapture).unwrap();
 
     terminal.hide_cursor().unwrap();
 
-    let mut pos = vec2(2.5, 4.5);
+    let mut pos = vec2(3.5, 4.5);
     let mut facing = PI;
+    terminal.clear().unwrap();
 
-    loop {
-        let mut file = File::create("pose.log").unwrap();
-        writeln!(file, "{pos:?} {facing:?}").unwrap();
+    'outer: loop {
+        macro_rules! redraw {
+            () => {
+                terminal
+                    .draw(|f| render_canvas(f, &world, &data, pos, facing, &params))
+                    .unwrap();
+            };
+        }
 
-        terminal.clear().unwrap();
-        terminal
-            .draw(|f| render_canvas(f, &world, &data, pos, facing, &params))
-            .unwrap();
+        redraw!();
 
-        match event::poll(Duration::from_secs(60)).unwrap() {
-            true => match event::read().unwrap() {
+        while event::poll(Duration::from_secs(60)).unwrap() {
+            match event::read().unwrap() {
                 event::Event::Key(k) => match k.code {
                     event::KeyCode::Char('a') => {
                         facing += 0.1;
+                        redraw!();
                     }
                     event::KeyCode::Char('d') => {
                         facing -= 0.1;
+                        redraw!();
                     }
                     event::KeyCode::Char('w') => {
-                        pos += 0.1 * cos_sin(facing);
+                        pos += 0.1 * cos_sin(facing + PI / 2.0);
+                        redraw!();
                     }
                     event::KeyCode::Char('s') => {
-                        pos -= 0.1 * cos_sin(facing);
+                        pos -= 0.1 * cos_sin(facing + PI / 2.0);
+                        redraw!();
                     }
-                    event::KeyCode::Esc => break,
+                    event::KeyCode::Esc => break 'outer,
                     _ => (),
                 },
                 _ => (),
-            },
-            false => break,
+            }
         }
     }
 
@@ -95,7 +101,6 @@ fn render_canvas(
         .y_bounds([-90.0, 90.0])
         .marker(ratatui::symbols::Marker::Block)
         .paint(move |ctx| {
-            let mut file = File::create("data.log").unwrap();
             for (i, r) in casts.iter().enumerate() {
                 let Some(r) = r else { continue };
                 let distance = r.hit_pos.distance(pos);
@@ -113,8 +118,6 @@ fn render_canvas(
                         _ => Color::White,
                     },
                 });
-
-                writeln!(&mut file, "{:?} {:?} {:?} {:?}", i, r, distance, vp_center).unwrap();
             }
         });
 

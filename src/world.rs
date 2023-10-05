@@ -51,6 +51,7 @@ impl World {
             let Some(grid_cell) = march_pos.cast::<usize>() else {
                 return None;
             };
+            println!("{march_pos:?}, {grid_cell:?}");
             match self.get((grid_cell.x, grid_cell.y)) {
                 Some(true) => {
                     // Found the grid position, perform raycast operation
@@ -59,6 +60,8 @@ impl World {
                     let box_pos = last_march_pos - box_offset;
                     let box_hit_pos = raycast_in_box(box_pos, ray_unit);
                     let hit_pos = box_hit_pos + box_offset;
+
+                    println!("{last_march_pos:?}, {box_offset:?} {box_pos:?}, {box_hit_pos:?}, {hit_pos:?}");
 
                     return Some(Raycast {
                         hit_pos,
@@ -188,7 +191,20 @@ fn box_hit_pos_to_box_side(hit: Vector2<f32>) -> Direction {
 mod tests {
     use super::*;
     use cgmath::{assert_ulps_eq, vec2, InnerSpace, Vector2};
+    use ndarray::array;
     use rstest::rstest;
+
+    fn example_world() -> World {
+        let data = array![
+            [1, 1, 3, 1, 1, 1, 1, 1, 1],
+            [3, 0, 0, 0, 0, 0, 0, 0, 2],
+            [1, 0, 0, 0, 0, 0, 0, 0, 1],
+            [2, 0, 0, 0, 0, 0, 3, 0, 1],
+            [1, 0, 0, 0, 0, 0, 0, 0, 1],
+            [1, 2, 1, 1, 1, 1, 1, 2, 1],
+        ];
+        World::from(data.map(|x| *x != 0))
+    }
 
     #[rstest]
     #[case(vec2(0.75, 0.5), vec2(-1.0, 0.0), vec2(0.0, 0.5))]
@@ -207,5 +223,16 @@ mod tests {
         let actual = raycast_in_box(pos, ray_unit);
 
         assert_ulps_eq!(actual, expected)
+    }
+
+    #[test]
+    fn raycast_edge() {
+        let world = example_world();
+
+        let result = world
+            .raycast(vec2(1.05, 1.05), vec2(-1.0, -1.0).normalize(), 10)
+            .unwrap();
+
+        assert_eq!(result.wall_side, Direction::North);
     }
 }
