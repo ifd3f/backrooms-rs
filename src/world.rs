@@ -1,6 +1,6 @@
-use std::ops::Index;
+use std::{ops::Index, process::Output};
 
-use cgmath::{vec2, Vector2, VectorSpace};
+use cgmath::{vec2, One, Vector2, VectorSpace, Zero};
 use ndarray::Array2;
 
 #[derive(Debug, Clone)]
@@ -8,7 +8,7 @@ pub struct World {
     map: Array2<bool>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Direction {
     East,
     North,
@@ -36,41 +36,44 @@ impl World {
         self.map.get((pos.1, pos.0)).copied()
     }
 
+    pub fn get_signed(&self, pos: (isize, isize)) -> Option<bool> {
+        if pos.0 < 0 || pos.1 < 0 {
+            None
+        } else {
+            self.map.get((pos.1 as usize, pos.0 as usize)).copied()
+        }
+    }
+
     /// Perform a single raycast from the given position along the given ray.
-    ///
-    /// Ray must be a unit vector
     pub fn raycast(
         &self,
         pos: Vector2<f32>,
-        ray_unit: Vector2<f32>,
+        ray: Vector2<f32>,
         max_dist: usize,
     ) -> Option<Raycast> {
-        // Probe for the first filled grid
-        for i in 1..=max_dist {
-            let march_pos = pos + ray_unit * i as f32;
-            let Some(grid_cell) = march_pos.cast::<usize>() else {
-                return None;
-            };
-            println!("{march_pos:?}, {grid_cell:?}");
-            match self.get((grid_cell.x, grid_cell.y)) {
+        let mut march_pos = pos;
+        let mut this_grid = march_pos.map(|x| x.floor()).cast::<isize>().unwrap();
+
+        for _ in 0..=max_dist {
+            let box_offset = this_grid.cast().unwrap();
+            let box_pos = march_pos - box_offset;
+            let (box_hit_pos, outgoing_dir) = raycast_in_box(box_pos, ray);
+            let hit_pos = box_hit_pos + box_offset;
+
+            let probe_cell = this_grid + Vector2::<isize>::from(outgoing_dir);
+
+            match self.get_signed((probe_cell.x, probe_cell.y)) {
                 Some(true) => {
-                    // Found the grid position, perform raycast operation
-                    let last_march_pos = pos + ray_unit * (i - 1) as f32;
-                    let box_offset = last_march_pos.map(|x| x.floor());
-                    let box_pos = last_march_pos - box_offset;
-                    let box_hit_pos = raycast_in_box(box_pos, ray_unit);
-                    let hit_pos = box_hit_pos + box_offset;
-
-                    println!("{last_march_pos:?}, {box_offset:?} {box_pos:?}, {box_hit_pos:?}, {hit_pos:?}");
-
                     return Some(Raycast {
                         hit_pos,
-                        wall: grid_cell,
-                        wall_side: box_hit_pos_to_box_side(box_hit_pos),
+                        wall: probe_cell.cast().unwrap(),
+                        wall_side: -outgoing_dir,
                     });
                 }
-                Some(false) => continue,
-                _ => return None,
+                Some(false) | None => {
+                    march_pos = hit_pos;
+                    this_grid = probe_cell;
+                }
             }
         }
         None
@@ -107,7 +110,7 @@ fn gen_rays(
     // Calculate the projection plane
     let pp_leftmost_point = facing_unit + (projection_plane_width / 2.0) * facing_left;
 
-    (0..n_rays).map(move |i| pp_leftmost_point - (i as f32 / n_rays as f32) * facing_unit)
+    (0..n_rays).map(move |i| pp_leftmost_point - (i as f32 / n_rays as f32) * facing_left)
 }
 
 impl From<Array2<bool>> for World {
@@ -127,64 +130,91 @@ impl From<Vector2<f32>> for Direction {
     }
 }
 
-impl From<Direction> for Vector2<f32> {
+impl std::ops::Neg for Direction {
+    type Output = Direction;
+
+    fn neg(self) -> Self::Output {
+        match self {
+            Direction::East => Direction::West,
+            Direction::North => Direction::South,
+            Direction::West => Direction::East,
+            Direction::South => Direction::North,
+        }
+    }
+}
+
+impl<S> From<Direction> for Vector2<S>
+where
+    S: One + Zero + std::ops::Neg<Output = S>,
+{
     fn from(value: Direction) -> Self {
         match value {
-            Direction::East => vec2(1.0, 0.0),
-            Direction::North => vec2(0.0, 1.0),
-            Direction::West => vec2(-1.0, 0.0),
-            Direction::South => vec2(0.0, -1.0),
+            Direction::East => vec2(S::one(), S::zero()),
+            Direction::North => vec2(S::zero(), S::one()),
+            Direction::West => vec2(-S::one(), S::zero()),
+            Direction::South => vec2(S::zero(), -S::one()),
+        }
+    }
+}
+
+impl Direction {
+    /// Reflect left to right, and right to left.
+    pub fn reflect_lr(self) -> Self {
+        match self {
+            Direction::East => Direction::West,
+            Direction::West => Direction::East,
+            ns => ns,
+        }
+    }
+
+    /// Reflect up to down, and down to up.
+    pub fn reflect_ud(self) -> Self {
+        match self {
+            Direction::North => Direction::South,
+            Direction::South => Direction::North,
+            ew => ew,
         }
     }
 }
 
 /// Raycast to the edge of the box bounded by points (0, 0) and (1, 1).
-fn raycast_in_box(pos: Vector2<f32>, ray_unit: Vector2<f32>) -> Vector2<f32> {
+fn raycast_in_box(pos: Vector2<f32>, ray: Vector2<f32>) -> (Vector2<f32>, Direction) {
+    use Direction::*;
+
     /// This is restricted to the case where both components of ray_unit
     /// are less than or equal to zero.
     #[inline(always)]
-    fn towards_origin(pos: Vector2<f32>, ray_unit: Vector2<f32>) -> Vector2<f32> {
-        match (ray_unit.x == 0.0, ray_unit.y == 0.0) {
+    fn towards_origin(pos: Vector2<f32>, ray: Vector2<f32>) -> (Vector2<f32>, Direction) {
+        let xdir = if ray.x > 0.0 { East } else { West };
+        let ydir = if ray.y > 0.0 { North } else { South };
+
+        match (ray.x == 0.0, ray.y == 0.0) {
             (true, true) => panic!("Cannot raycast with zero-valued ray"),
-            (true, false) => return vec2(pos.x, 0.0),
-            (false, true) => return vec2(0.0, pos.y),
+            (true, false) => return (vec2(pos.x, 0.0), ydir),
+            (false, true) => return (vec2(0.0, pos.y), xdir),
             (false, false) => (),
         }
 
-        let x_int = pos.x - (ray_unit.x / ray_unit.y) * pos.y;
-        let y_int = pos.y - (ray_unit.y / ray_unit.x) * pos.x;
+        let x_int = pos.x - (ray.x / ray.y) * pos.y;
+        let y_int = pos.y - (ray.y / ray.x) * pos.x;
 
         if x_int < 0.0 {
-            vec2(0.0, y_int)
+            (vec2(0.0, y_int), xdir)
         } else {
-            vec2(x_int, 0.0)
+            (vec2(x_int, 0.0), ydir)
         }
     }
 
-    if ray_unit.x > 0.0 {
-        let o = raycast_in_box(vec2(1.0 - pos.x, pos.y), vec2(-ray_unit.x, ray_unit.y));
-        return vec2(1.0 - o.x, o.y);
+    if ray.x > 0.0 {
+        let (o, d) = raycast_in_box(vec2(1.0 - pos.x, pos.y), vec2(-ray.x, ray.y));
+        return (vec2(1.0 - o.x, o.y), d.reflect_lr());
     }
-    if ray_unit.y > 0.0 {
-        let o = towards_origin(vec2(pos.x, 1.0 - pos.y), vec2(ray_unit.x, -ray_unit.y));
-        return vec2(o.x, 1.0 - o.y);
+    if ray.y > 0.0 {
+        let (o, d) = towards_origin(vec2(pos.x, 1.0 - pos.y), vec2(ray.x, -ray.y));
+        return (vec2(o.x, 1.0 - o.y), d.reflect_ud());
     }
 
-    towards_origin(pos, ray_unit)
-}
-
-fn box_hit_pos_to_box_side(hit: Vector2<f32>) -> Direction {
-    if hit.x == 1.0 {
-        Direction::West
-    } else if hit.x == 0.0 {
-        Direction::East
-    } else if hit.y == 1.0 {
-        Direction::South
-    } else if hit.y == 0.0 {
-        Direction::North
-    } else {
-        panic!("Not a box side!")
-    }
+    towards_origin(pos, ray)
 }
 
 #[cfg(test)]
@@ -207,32 +237,48 @@ mod tests {
     }
 
     #[rstest]
-    #[case(vec2(0.75, 0.5), vec2(-1.0, 0.0), vec2(0.0, 0.5))]
-    #[case(vec2(0.75, 0.5), vec2(0.0, -1.0), vec2(0.75, 0.0))]
-    #[case(vec2(0.5, 0.5), vec2(-1.0, 0.5), vec2(0.0, 0.75))]
-    #[case(vec2(0.25, 0.5), vec2(1.0, -0.25), vec2(1.0, 0.3125))]
-    #[case(vec2(0.5, 0.25), vec2(1.0, 1.0), vec2(1.0, 0.75))]
-    #[case(vec2(0.5, 0.5), vec2(1.0, 1.0), vec2(1.0, 1.0))]
+    #[case(vec2(0.75, 0.5), vec2(-1.0, 0.0),  (vec2(0.0, 0.5),    Direction::West))]
+    #[case(vec2(0.75, 0.5), vec2(0.0, -1.0),  (vec2(0.75, 0.0),   Direction::South))]
+    #[case(vec2(0.5, 0.5),  vec2(-1.0, 0.5),  (vec2(0.0, 0.75),   Direction::West))]
+    #[case(vec2(0.25, 0.5), vec2(1.0, -0.25), (vec2(1.0, 0.3125), Direction::East))]
+    #[case(vec2(0.5, 0.25), vec2(1.0, 1.0),   (vec2(1.0, 0.75),   Direction::East))]
+    #[case(vec2(0.5, 0.5),  vec2(1.0, 1.0),   (vec2(1.0, 1.0),    Direction::North))]
     fn test_raycast_in_box(
         #[case] pos: Vector2<f32>,
         #[case] ray: Vector2<f32>,
-        #[case] expected: Vector2<f32>,
+        #[case] expected: (Vector2<f32>, Direction),
     ) {
-        let ray_unit = ray.normalize();
+        let (hit, dir) = raycast_in_box(pos, ray);
 
-        let actual = raycast_in_box(pos, ray_unit);
-
-        assert_ulps_eq!(actual, expected)
+        assert_eq!(dir, expected.1);
+        assert_ulps_eq!(hit, expected.0);
     }
 
-    #[test]
-    fn raycast_edge() {
+    #[rstest]
+    #[case(
+        (vec2(2.5, 2.5), vec2(-1.0, 0.0)),
+        Raycast {
+            hit_pos: vec2(1.0, 2.5),
+            wall: vec2(0, 2),
+            wall_side: Direction::East
+        }
+    )]
+    #[case(
+        (vec2(1.05, 1.05), vec2(-0.5, -1.0)),
+        Raycast {
+            hit_pos: vec2(1.025, 1.0),
+            wall: vec2(1, 0),
+            wall_side: Direction::North
+        }
+    )]
+    fn raycast_edge(#[case] ray: (Vector2<f32>, Vector2<f32>), #[case] expected: Raycast) {
+        let (pos, ray) = ray;
         let world = example_world();
 
-        let result = world
-            .raycast(vec2(1.05, 1.05), vec2(-1.0, -1.0).normalize(), 10)
-            .unwrap();
+        let result = world.raycast(pos, ray, 100).unwrap();
 
-        assert_eq!(result.wall_side, Direction::North);
+        assert_eq!(result.wall_side, expected.wall_side);
+        assert_eq!(result.wall, expected.wall);
+        assert_ulps_eq!(result.hit_pos, expected.hit_pos)
     }
 }

@@ -9,6 +9,8 @@ use crossterm::{
     terminal::{self, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ndarray::{array, Array2};
+use ratatui::text::{self, Text};
+use ratatui::widgets::Block;
 use ratatui::{
     prelude::{Backend, CrosstermBackend},
     style::Color,
@@ -30,7 +32,7 @@ pub fn main() {
     let world = World::from(data.map(|x| *x != 0));
 
     let params = RaycastParams {
-        max_dist: 20,
+        max_dist: 50,
         projection_plane_width: 1.0,
     };
     terminal::enable_raw_mode().unwrap();
@@ -39,7 +41,7 @@ pub fn main() {
     terminal.hide_cursor().unwrap();
 
     let mut pos = vec2(3.5, 4.5);
-    let mut facing = PI;
+    let mut facing = 0.0;
     terminal.clear().unwrap();
 
     'outer: loop {
@@ -57,19 +59,19 @@ pub fn main() {
             match event::read().unwrap() {
                 event::Event::Key(k) => match k.code {
                     event::KeyCode::Char('a') => {
-                        facing += 0.1;
-                        redraw!();
-                    }
-                    event::KeyCode::Char('d') => {
                         facing -= 0.1;
                         redraw!();
                     }
+                    event::KeyCode::Char('d') => {
+                        facing += 0.1;
+                        redraw!();
+                    }
                     event::KeyCode::Char('w') => {
-                        pos += 0.1 * cos_sin(facing + PI / 2.0);
+                        pos += 0.1 * cos_sin(facing);
                         redraw!();
                     }
                     event::KeyCode::Char('s') => {
-                        pos -= 0.1 * cos_sin(facing + PI / 2.0);
+                        pos -= 0.1 * cos_sin(facing);
                         redraw!();
                     }
                     event::KeyCode::Esc => break 'outer,
@@ -94,9 +96,9 @@ fn render_canvas(
 ) {
     let width = frame.size().width as usize;
     let casts = world.raycast_plane(pos, cos_sin(facing), width, params);
-    let vp_center = frame.size().height as f64 / 2.0;
 
     let widget = Canvas::default()
+        .block(Block::default().title(format!("{pos:?}")))
         .x_bounds([0.0, width as f64])
         .y_bounds([-90.0, 90.0])
         .marker(ratatui::symbols::Marker::Block)
