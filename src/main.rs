@@ -1,15 +1,15 @@
-use std::io::Write;
-use std::{f32::consts::PI, fs::File, time::Duration};
+use std::time::Duration;
 
-use backrooms::{RaycastParams, World};
+use backrooms::{
+    camera::{raycast_camera, CameraParams},
+    world::ArrayWorld,
+};
 use cgmath::{vec2, MetricSpace, Vector2};
-use crossterm::event::KeyEvent;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture},
     terminal::{self, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ndarray::{array, Array2};
-use ratatui::text::{self, Text};
 use ratatui::widgets::Block;
 use ratatui::{
     prelude::{Backend, CrosstermBackend},
@@ -29,12 +29,8 @@ pub fn main() {
         [1, 0, 0, 0, 0, 0, 0, 0, 1],
         [1, 2, 1, 1, 1, 1, 1, 2, 1],
     ];
-    let world = World::from(data.map(|x| *x != 0));
+    let world = ArrayWorld::from(data.map(|x| *x != 0));
 
-    let params = RaycastParams {
-        max_dist: 50,
-        projection_plane_width: 1.0,
-    };
     terminal::enable_raw_mode().unwrap();
     crossterm::execute!(std::io::stderr(), EnterAlternateScreen, EnableMouseCapture).unwrap();
 
@@ -42,13 +38,14 @@ pub fn main() {
 
     let mut pos = vec2(3.5, 4.5);
     let mut facing = 0.0;
+    let mut ppw = 1.0;
     terminal.clear().unwrap();
 
     'outer: loop {
         macro_rules! redraw {
             () => {
                 terminal
-                    .draw(|f| render_canvas(f, &world, &data, pos, facing, &params))
+                    .draw(|f| render_canvas(f, &world, &data, pos, facing, ppw))
                     .unwrap();
             };
         }
@@ -82,6 +79,14 @@ pub fn main() {
                         pos -= 0.1 * cos_sin_rot(facing);
                         redraw!();
                     }
+                    event::KeyCode::Char('t') => {
+                        ppw *= 1.1;
+                        redraw!();
+                    }
+                    event::KeyCode::Char('g') => {
+                        ppw /= 1.1;
+                        redraw!();
+                    }
                     event::KeyCode::Esc => break 'outer,
                     _ => (),
                 },
@@ -96,14 +101,23 @@ pub fn main() {
 
 fn render_canvas(
     frame: &mut Frame<impl Backend>,
-    world: &World,
+    world: &ArrayWorld,
     data: &Array2<i32>,
     pos: Vector2<f32>,
     facing: f32,
-    params: &RaycastParams,
+    ppw: f32,
 ) {
     let width = frame.size().width as usize;
-    let casts = world.raycast_plane(pos, cos_sin(facing), width, params);
+    let casts = raycast_camera(
+        world,
+        &CameraParams {
+            pos,
+            facing_unit: cos_sin(facing),
+            n_rays: width,
+            max_dist: 100.0,
+            projection_plane_width: ppw,
+        },
+    );
 
     let widget = Canvas::default()
         .block(Block::default().title(format!("{pos:?}")))
