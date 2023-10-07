@@ -29,17 +29,25 @@ pub struct Raycast {
     pub wall_side: Direction,
 }
 
-impl World {
-    pub fn get(&self, pos: (usize, usize)) -> Option<bool> {
-        self.map.get((pos.1, pos.0)).copied()
-    }
+pub trait WorldIndex {
+    fn into_world_index(self) -> Option<(usize, usize)>;
+}
 
-    pub fn get_signed(&self, pos: (isize, isize)) -> Option<bool> {
-        if pos.0 < 0 || pos.1 < 0 {
+impl<T: Into<(isize, isize)>> WorldIndex for T {
+    fn into_world_index(self) -> Option<(usize, usize)> {
+        let (x, y) = Into::<(isize, isize)>::into(self);
+        if x < 0 || x < 0 {
             None
         } else {
-            self.map.get((pos.1 as usize, pos.0 as usize)).copied()
+            Some((x as usize, y as usize))
         }
+    }
+}
+
+impl World {
+    pub fn get(&self, pos: impl WorldIndex) -> Option<bool> {
+        let (x, y) = pos.into_world_index()?;
+        self.map.get((y, x)).copied()
     }
 
     /// Perform a single raycast from the given position along the given ray.
@@ -60,7 +68,7 @@ impl World {
 
             let probe_cell = this_grid + Vector2::<isize>::from(outgoing_dir);
 
-            match self.get_signed((probe_cell.x, probe_cell.y)) {
+            match self.get(probe_cell) {
                 Some(true) => {
                     // We hit probe_cell
                     return Some(Raycast {
