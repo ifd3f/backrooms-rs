@@ -1,6 +1,4 @@
-use std::{ops::Index, process::Output};
-
-use cgmath::{vec2, One, Vector2, VectorSpace, Zero};
+use cgmath::{vec2, One, Vector2, Zero};
 use ndarray::Array2;
 
 #[derive(Debug, Clone)]
@@ -64,6 +62,7 @@ impl World {
 
             match self.get_signed((probe_cell.x, probe_cell.y)) {
                 Some(true) => {
+                    // We hit probe_cell
                     return Some(Raycast {
                         hit_pos,
                         wall: probe_cell.cast().unwrap(),
@@ -267,6 +266,14 @@ mod tests {
         (vec2(1.05, 1.05), vec2(-0.5, -1.0)),
         Raycast {
             hit_pos: vec2(1.025, 1.0),
+            wall: vec2(1, 0),
+            wall_side: Direction::North
+        }
+    )]
+    #[case(
+        (vec2(3.5, 3.5), vec2(-1.0, -1.0)),
+        Raycast {
+            hit_pos: vec2(1.0, 1.0),
             wall: vec2(1, 0),
             wall_side: Direction::North
         }

@@ -23,7 +23,7 @@ pub fn main() {
     let mut terminal = Terminal::new(backend).expect("Failed to set up terminal");
     let data = array![
         [1, 1, 3, 1, 1, 1, 1, 1, 1],
-        [3, 0, 0, 0, 0, 0, 0, 0, 2],
+        [3, 0, 0, 2, 0, 0, 0, 0, 2],
         [1, 0, 0, 0, 0, 0, 0, 0, 1],
         [2, 0, 0, 0, 0, 0, 3, 0, 1],
         [1, 0, 0, 0, 0, 0, 0, 0, 1],
@@ -58,11 +58,11 @@ pub fn main() {
         while event::poll(Duration::from_secs(60)).unwrap() {
             match event::read().unwrap() {
                 event::Event::Key(k) => match k.code {
-                    event::KeyCode::Char('a') => {
+                    event::KeyCode::Char('q') => {
                         facing -= 0.1;
                         redraw!();
                     }
-                    event::KeyCode::Char('d') => {
+                    event::KeyCode::Char('e') => {
                         facing += 0.1;
                         redraw!();
                     }
@@ -72,6 +72,14 @@ pub fn main() {
                     }
                     event::KeyCode::Char('s') => {
                         pos -= 0.1 * cos_sin(facing);
+                        redraw!();
+                    }
+                    event::KeyCode::Char('a') => {
+                        pos += 0.1 * cos_sin_rot(facing);
+                        redraw!();
+                    }
+                    event::KeyCode::Char('d') => {
+                        pos -= 0.1 * cos_sin_rot(facing);
                         redraw!();
                     }
                     event::KeyCode::Esc => break 'outer,
@@ -106,7 +114,7 @@ fn render_canvas(
             for (i, r) in casts.iter().enumerate() {
                 let Some(r) = r else { continue };
                 let distance = r.hit_pos.distance(pos);
-                let height = 100.0 / distance;
+                let height = 200.0 / distance;
 
                 ctx.draw(&Line {
                     x1: i as f64,
@@ -129,4 +137,9 @@ fn render_canvas(
 pub fn cos_sin(a: f32) -> Vector2<f32> {
     let (s, c) = a.sin_cos();
     vec2(c, s)
+}
+
+pub fn cos_sin_rot(a: f32) -> Vector2<f32> {
+    let (s, c) = a.sin_cos();
+    vec2(s, -c)
 }
