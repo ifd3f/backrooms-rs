@@ -1,6 +1,9 @@
-use std::ops::{Add, Neg, Sub};
+use std::{
+    cmp::Ordering,
+    ops::{Add, Sub},
+};
 
-use cgmath::{vec2, One, Vector2, Zero};
+use cgmath::{vec2, BaseNum, One, Vector2, Zero};
 use rand::{distributions::Standard, prelude::Distribution, seq::SliceRandom, Rng};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -9,6 +12,12 @@ pub enum Direction {
     North = 1,
     West = 2,
     South = 3,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Axis {
+    Horizontal,
+    Vertical,
 }
 
 impl From<Vector2<f32>> for Direction {
@@ -56,6 +65,23 @@ impl Distribution<Direction> for Standard {
     }
 }
 
+impl Distribution<Axis> for Standard {
+    fn sample<R: rand::Rng + ?Sized>(&self, rng: &mut R) -> Axis {
+        use Axis::*;
+        *[Vertical, Horizontal].choose(rng).unwrap()
+    }
+}
+
+impl Axis {
+    #[inline]
+    pub fn complement(self) -> Axis {
+        match self {
+            Axis::Vertical => Axis::Horizontal,
+            Axis::Horizontal => Axis::Vertical,
+        }
+    }
+}
+
 impl Direction {
     /// Reflect left to right, and right to left.
     pub fn reflect_lr(self) -> Self {
@@ -72,6 +98,39 @@ impl Direction {
             Direction::North => Direction::South,
             Direction::South => Direction::North,
             ew => ew,
+        }
+    }
+}
+
+pub struct Rectangle<O, L> {
+    pub x: O,
+    pub y: O,
+    pub w: L,
+    pub h: L,
+}
+
+impl<O: BaseNum, L: BaseNum> Rectangle<O, L> {
+    pub fn longer_axis(&self) -> Option<Axis> {
+        match self.w.partial_cmp(&self.h)? {
+            Ordering::Less => Some(Axis::Vertical),
+            Ordering::Equal => None,
+            Ordering::Greater => Some(Axis::Horizontal),
+        }
+    }
+
+    #[inline]
+    pub fn axis_length(&self, axis: Axis) -> L {
+        match axis {
+            Axis::Horizontal => self.w,
+            Axis::Vertical => self.h,
+        }
+    }
+
+    #[inline]
+    pub fn axis_offset(&self, axis: Axis) -> O {
+        match axis {
+            Axis::Horizontal => self.x,
+            Axis::Vertical => self.y,
         }
     }
 }

@@ -1,120 +1,202 @@
-use cgmath::{vec2, Vector2};
-use image::{ImageBuffer, Rgb};
-use ndarray::{s, Array2};
-use rand::{
-    distributions::Standard, prelude::Distribution, rngs::SmallRng, seq::SliceRandom, Rng,
-    SeedableRng,
-};
+use cgmath::BaseNum;
+use rand::Rng;
 
-use crate::util::{Direction, RelativeBounds, TurnDir, Turnable};
+use crate::util::{Axis, Rectangle};
 
-#[derive(Debug, Clone)]
-pub struct Hallway {
-    pub position: Vector2<isize>,
-    pub length: usize,
-    pub direction: Direction,
+pub struct RbspParams {
+    /// Rooms with a width or height shorter than this size will never be partitioned.
+    pub min_room_len: usize,
+
+    /// Rooms with an area larger than a square of size will always be partitioned.
+    pub max_room_len: usize,
+
+    /// A probability in [0, 1] determining if a room in [min room len, max room len] should
+    /// be kept.
+    pub p_keep_rooms: f32,
+
+    /// A factor in (0, inf) controlling how much the partitioner prefers making
+    /// rooms more square than oblong.
+    ///
+    /// Given a room that has a long axis and a short axis:
+    /// - k > 1 prefers cutting rooms along the long axis, making them less oblong.
+    /// - k < 1 prefers cutting rooms along the short axis, making them more oblong.
+    /// - k = 1 has no preference.
+    ///
+    /// Square will not be affected by this parameter.
+    pub k_deoblongification: f32,
 }
 
-#[derive(Debug, Clone)]
-pub struct HallwayTree {
-    length: usize,
-    children: Vec<BranchChild>,
+pub struct Line {
+    pub start: isize,
+    pub end: isize,
+    pub offset: isize,
+    pub axis: Axis,
 }
 
-#[derive(Debug, Clone)]
-pub struct BranchChild {
-    position: usize,
-    direction: TurnDir,
-    child: HallwayTree,
-}
-
-pub fn random_hallway_tree(
+/// random binary space partition
+pub fn rbsp(
     rng: &mut impl Rng,
-    bounds: RelativeBounds<usize>,
-    tree_depth: usize,
-) -> Option<HallwayTree> {
-    if tree_depth == 0 || bounds.forward < 10 {
-        return None;
+    full_rect: Rectangle<isize, usize>,
+    params: RbspParams,
+) -> (Vec<Rectangle<isize, usize>>, Vec<Line>) {
+    let mut examining = vec![full_rect];
+    let mut safe = vec![];
+    let mut partitions = vec![];
+
+    while let Some(r) = examining.pop() {
+        if usize::min(r.w, r.h) <= params.min_room_len {
+            // Cannot partition this room any further, so place in "acceptable" set
+            safe.push(r);
+            continue;
+        }
+
+        let avged_size: f32 = (r.w as f32 * r.h as f32).powf(0.5);
+        if avged_size <= params.max_room_len as f32 && rng.gen::<f32>() < params.p_keep_rooms {
+            safe.push(r);
+            continue;
+        }
+
+        let axis = pick_axis(rng, &r, params.k_deoblongification);
+        let partition_pct = rng.gen::<f32>() * 0.8 + 0.1;
+        let (r1, p, r2) = make_partition(&r, partition_pct, axis);
+
+        examining.push(r1);
+        examining.push(r2);
+        partitions.push(p);
     }
 
-    let length = rng.gen_range(bounds.forward / 2..bounds.forward);
-    let new_bounds = RelativeBounds {
-        forward: length,
-        ..bounds
-    };
+    (safe, partitions)
+}
 
-    let children = if tree_depth > 0 && length > 20 {
-        (0..rng.gen_range(0..10))
-            .flat_map(|_| {
-                let position: usize = rng.gen_range(1..=length);
-                let direction = rng.gen::<TurnDir>();
-                let bounds = new_bounds
-                    .clone()
-                    .map(|a| a as isize)
-                    .translate(vec2(0, -(position as isize)));
-                let child = random_hallway_tree(rng, bounds.map(|a| a as usize), tree_depth - 1)?;
+fn pick_axis<O: BaseNum, L: BaseNum>(
+    rng: &mut impl Rng,
+    rect: &Rectangle<O, L>,
+    k_deoblongification: f32,
+) -> Axis {
+    // Weights swap axes because the longer the *opposite* axis is,
+    // the more weight *this* axis should have.
+    let w_weight = rect.h.to_f32().unwrap().powf(k_deoblongification);
+    let h_weight = rect.w.to_f32().unwrap().powf(k_deoblongification);
 
-                Some(BranchChild {
-                    position,
-                    direction,
-                    child,
-                })
-            })
-            .collect()
+    let p_horiz = w_weight / (w_weight + h_weight);
+
+    if rng.gen::<f32>() < p_horiz {
+        Axis::Horizontal
     } else {
-        vec![]
-    };
-
-    Some(HallwayTree { length, children })
-}
-
-fn full_length_hallway(direction: Direction, position: usize, length: usize) -> Hallway {
-    let position = match direction {
-        Direction::East => vec2(0, position),
-        Direction::North => vec2(position, 0),
-        Direction::West => vec2(length - 1, position),
-        Direction::South => vec2(position, length - 1),
-    };
-
-    Hallway {
-        position: position.cast().unwrap(),
-        length,
-        direction,
+        Axis::Vertical
     }
 }
 
-pub fn draw_hallway(a: &mut Array2<bool>, h: Hallway) {
-    let pos = h.position;
-    let step: Vector2<isize> = h.direction.into();
-    for i in 0..=h.length as isize {
-        let Vector2 { x, y } = pos.cast().unwrap() + i * step;
-        if let Some(c) = a.get_mut((x as usize, y as usize)) {
-            *c = false
+pub fn make_partition(
+    r: &Rectangle<isize, usize>,
+    p: f32,
+    axis: Axis,
+) -> (Rectangle<isize, usize>, Line, Rectangle<isize, usize>) {
+    match axis {
+        Axis::Horizontal => {
+            let w1 = (r.w as f32 * p) as usize;
+            let r1 = Rectangle {
+                x: r.x,
+                y: r.y,
+                w: w1,
+                h: r.h,
+            };
+            let r2 = Rectangle {
+                x: r.x + w1 as isize,
+                y: r.y,
+                w: r.w - w1,
+                h: r.h,
+            };
+            let p = Line {
+                start: r.y,
+                end: r.y + r.h as isize,
+                offset: r.x + w1 as isize,
+                axis: Axis::Horizontal,
+            };
+            (r1, p, r2)
+        }
+        Axis::Vertical => {
+            let h1 = (r.h as f32 * p) as usize;
+            let r1 = Rectangle {
+                x: r.x,
+                y: r.y,
+                w: r.w,
+                h: h1,
+            };
+            let r2 = Rectangle {
+                x: r.x + h1 as isize,
+                y: r.y,
+                w: r.w,
+                h: r.h - h1,
+            };
+            let p = Line {
+                start: r.x,
+                end: r.x + r.w as isize,
+                offset: r.y + h1 as isize,
+                axis: Axis::Vertical,
+            };
+            (r1, p, r2)
         }
     }
 }
 
-impl HallwayTree {
-    pub fn get_hallways(
-        self,
-        root_pos: Vector2<isize>,
-        root_dir: Direction,
-    ) -> Box<dyn Iterator<Item = Hallway>> {
-        let this = Hallway {
-            position: root_pos,
-            length: self.length,
-            direction: root_dir,
-        };
-        let axis = Vector2::<isize>::from(root_dir);
+pub fn partition<O, L>(
+    rect: Rectangle<O, L>,
+    divider_percents: impl IntoIterator<Item = L>,
+    axis: Axis,
+) -> Vec<Rectangle<O, L>>
+where
+    O: BaseNum,
+    L: BaseNum,
+{
+    let walls_percents = [L::zero()]
+        .into_iter()
+        .chain(divider_percents.into_iter())
+        .chain([L::one()].into_iter());
 
-        Box::new(
-            [this]
-                .into_iter()
-                .chain(self.children.into_iter().flat_map(move |c| {
-                    let abs_pos = root_pos + axis * c.position as isize;
-                    let abs_dir = root_dir.rotate(c.direction);
-                    c.child.get_hallways(abs_pos, abs_dir)
-                })),
-        )
+    let mut wall_offsets = walls_percents
+        .map(|p| match axis {
+            Axis::Vertical => rect.h,
+            Axis::Horizontal => rect.w
+        } * p)
+        .collect::<Vec<_>>();
+    wall_offsets.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+    let neighbors = wall_offsets.iter().skip(1).zip(wall_offsets.iter());
+
+    neighbors
+        .map(|(l, r)| match axis {
+            Axis::Vertical => Rectangle {
+                x: rect.x,
+                y: rect.y + O::from(*l).unwrap(),
+                w: rect.w,
+                h: *l - *r,
+            },
+            Axis::Horizontal => Rectangle {
+                x: rect.x + O::from(*l).unwrap(),
+                y: rect.y,
+                w: *l - *r,
+                h: rect.h,
+            },
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::util::Rectangle;
+
+    use super::*;
+
+    fn foo() {
+        partition(
+            Rectangle {
+                x: 3.0,
+                y: 5.0,
+                w: 10.0,
+                h: 8.0,
+            },
+            vec![0.1, 0.5, 0.7],
+        );
     }
 }
