@@ -20,8 +20,8 @@ pub fn main() {
             h: 512,
         },
         RbspParams {
-            min_room_len: 20,
-            max_room_len: 50,
+            min_room_len: 5,
+            max_room_len: 80,
             p_keep_rooms: 0.3,
             k_deoblongification: 5.0,
         },

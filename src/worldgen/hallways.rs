@@ -1,15 +1,10 @@
-use std::collections::VecDeque;
-
 use cgmath::BaseNum;
-use rand::{
-    seq::{IteratorRandom, SliceRandom},
-    Rng,
-};
+use rand::{seq::IteratorRandom, Rng};
 
 use crate::util::{Axis, Line, Rectangle};
 
 pub struct RbspParams {
-    /// Rooms with a width or height shorter than this size will never be partitioned.
+    /// Rooms with a width or height shorter than this size will never be created.
     pub min_room_len: usize,
 
     /// Rooms with an area larger than a square of size will always be partitioned.
@@ -47,8 +42,9 @@ pub fn rbsp(
         };
         let r = examining.remove(i);
 
-        if usize::min(r.w, r.h) <= params.min_room_len {
-            // Cannot partition this room any further, so place in "acceptable" set
+        if usize::min(r.w, r.h) / 2 <= params.min_room_len {
+            // Cannot partition this room any further without going less than min_room_len,
+            // so place in "acceptable" set
             safe.push(r);
             continue;
         }
@@ -60,8 +56,10 @@ pub fn rbsp(
         }
 
         let axis = pick_axis(rng, &r, params.k_deoblongification);
-        let partition_pct = rng.gen::<f32>() * 0.8 + 0.1;
-        let (r1, p, r2) = make_partition(&r, partition_pct, axis);
+        println!("{}, {}", r.axis_length(axis), params.min_room_len);
+        let distribution_width = r.axis_length(axis) - params.min_room_len + 1;
+        let partition_offset = rng.gen_range(0..distribution_width) + params.min_room_len / 2;
+        let (r1, p, r2) = make_partition(&r, partition_offset, axis);
 
         examining.push(r1);
         examining.push(r2);
@@ -78,8 +76,8 @@ fn pick_axis<O: BaseNum, L: BaseNum>(
     rect: &Rectangle<O, L>,
     k_deoblongification: f32,
 ) -> Axis {
-    let h_weight = rect.h.to_f32().unwrap().powf(k_deoblongification);
     let w_weight = rect.w.to_f32().unwrap().powf(k_deoblongification);
+    let h_weight = rect.h.to_f32().unwrap().powf(k_deoblongification);
 
     let p_horiz = w_weight / (w_weight + h_weight);
 
@@ -92,26 +90,25 @@ fn pick_axis<O: BaseNum, L: BaseNum>(
 
 pub fn make_partition(
     r: &Rectangle<isize, usize>,
-    ratio: f32,
+    offset: usize,
     axis: Axis,
 ) -> (Rectangle<isize, usize>, Line, Rectangle<isize, usize>) {
     match axis {
         Axis::Horizontal => {
-            let w1 = (r.w as f32 * ratio) as usize;
             let r1 = Rectangle {
                 x: r.x,
                 y: r.y,
-                w: w1,
+                w: offset,
                 h: r.h,
             };
             let r2 = Rectangle {
-                x: r.x + w1 as isize,
+                x: r.x + offset as isize,
                 y: r.y,
-                w: r.w - w1,
+                w: r.w - offset,
                 h: r.h,
             };
             let p = Line {
-                x: r.x + w1 as isize,
+                x: r.x + offset as isize,
                 y: r.y,
                 length: r.h,
                 axis: Axis::Vertical,
@@ -119,22 +116,21 @@ pub fn make_partition(
             (r1, p, r2)
         }
         Axis::Vertical => {
-            let h1 = (r.h as f32 * ratio) as usize;
             let r1 = Rectangle {
                 x: r.x,
                 y: r.y,
                 w: r.w,
-                h: h1,
+                h: offset,
             };
             let r2 = Rectangle {
                 x: r.x,
-                y: r.y + h1 as isize,
+                y: r.y + offset as isize,
                 w: r.w,
-                h: r.h - h1,
+                h: r.h - offset,
             };
             let p = Line {
                 x: r.x,
-                y: r.y + h1 as isize,
+                y: r.y + offset as isize,
                 length: r.w,
                 axis: Axis::Horizontal,
             };
@@ -187,9 +183,33 @@ where
 
 #[cfg(test)]
 mod tests {
+    use rand::{rngs::SmallRng, SeedableRng};
+
     use crate::util::{Line, Rectangle};
 
     use super::*;
+
+    #[test]
+    fn generation_smoke_test() {
+        for i in 0..1000 {
+            let mut rng = SmallRng::seed_from_u64(i);
+            rbsp(
+                &mut rng,
+                Rectangle {
+                    x: 0,
+                    y: 0,
+                    w: 512,
+                    h: 512,
+                },
+                RbspParams {
+                    min_room_len: 5,
+                    max_room_len: 80,
+                    p_keep_rooms: 0.3,
+                    k_deoblongification: 5.0,
+                },
+            );
+        }
+    }
 
     #[test]
     fn do_make_partition() {
@@ -200,7 +220,7 @@ mod tests {
                 w: 10,
                 h: 8,
             },
-            0.5,
+            5,
             Axis::Horizontal,
         );
 
@@ -237,7 +257,7 @@ mod tests {
                 w: 10,
                 h: 8,
             },
-            0.5,
+            4,
             Axis::Vertical,
         );
 
