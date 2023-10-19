@@ -1,30 +1,45 @@
-use backrooms::{util::{RelativeBounds, Direction}, worldgen::{hallways::{random_hallway_tree, draw_hallway}, render_to_img}};
-use cgmath::{vec2, conv::array2};
+use backrooms::{
+    util::{Axis, Rectangle, Line},
+    worldgen::{
+        hallways::{rbsp, RbspParams},
+        render_to_img,
+    },
+};
 use ndarray::Array2;
 use rand::{rngs::SmallRng, SeedableRng};
 
 pub fn main() {
     // let mut rng = SmallRng::seed_from_u64(10);
     let mut rng = SmallRng::from_entropy();
-    let w = random_hallway_tree(
+    let (rooms, lines) = rbsp(
         &mut rng,
-        RelativeBounds {
-            forward: 512,
-            back: 0,
-            left: 256,
-            right: 256,
+        Rectangle {
+            x: 0,
+            y: 0,
+            w: 512,
+            h: 512,
         },
-        3,
-    ).unwrap();
-    println!("{w:#?}");
+        RbspParams {
+            min_room_len: 20,
+            max_room_len: 50,
+            p_keep_rooms: 0.3,
+            k_deoblongification: 5.0,
+        },
+    );
 
-    let hws = w.get_hallways(vec2(256, 0), Direction::North).collect::<Vec<_>>();
     let mut a = Array2::zeros((512, 512)).map(|_: &i32| true);
-    for h in hws {
+    for h in lines {
         draw_hallway(&mut a, h)
     }
 
     let img = render_to_img(&a);
     img.save("test.png").unwrap();
-    
+}
+
+pub fn draw_hallway(a: &mut Array2<bool>, l: Line) {
+    for pos in l.points() {
+        if let Some(c) = a.get_mut((pos.0 as usize, pos.1 as usize)) {
+            *c = false
+        }
+    }
 }

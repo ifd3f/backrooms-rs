@@ -102,6 +102,7 @@ impl Direction {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Rectangle<O, L> {
     pub x: O,
     pub y: O,
@@ -221,5 +222,22 @@ impl<T> RelativeBounds<T> {
             left: f(self.left),
             right: f(self.right),
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Line {
+    pub x: isize,
+    pub y: isize,
+    pub length: usize,
+    pub axis: Axis,
+}
+
+impl Line {
+    pub fn points(&self) -> impl Iterator<Item = (isize, isize)> + '_ {
+        (0..=self.length as isize).map(|i| match self.axis {
+            Axis::Horizontal => (self.x + i, self.y),
+            Axis::Vertical => (self.x, self.y + i),
+        })
     }
 }

@@ -1,7 +1,12 @@
-use cgmath::BaseNum;
-use rand::Rng;
+use std::collections::VecDeque;
 
-use crate::util::{Axis, Rectangle};
+use cgmath::BaseNum;
+use rand::{
+    seq::{IteratorRandom, SliceRandom},
+    Rng,
+};
+
+use crate::util::{Axis, Line, Rectangle};
 
 pub struct RbspParams {
     /// Rooms with a width or height shorter than this size will never be partitioned.
@@ -26,13 +31,6 @@ pub struct RbspParams {
     pub k_deoblongification: f32,
 }
 
-pub struct Line {
-    pub start: isize,
-    pub end: isize,
-    pub offset: isize,
-    pub axis: Axis,
-}
-
 /// random binary space partition
 pub fn rbsp(
     rng: &mut impl Rng,
@@ -43,7 +41,12 @@ pub fn rbsp(
     let mut safe = vec![];
     let mut partitions = vec![];
 
-    while let Some(r) = examining.pop() {
+    loop {
+        let Some(i) = (0..examining.len()).choose(rng) else {
+            break;
+        };
+        let r = examining.remove(i);
+
         if usize::min(r.w, r.h) <= params.min_room_len {
             // Cannot partition this room any further, so place in "acceptable" set
             safe.push(r);
@@ -65,6 +68,8 @@ pub fn rbsp(
         partitions.push(p);
     }
 
+    println!("{safe:#?}");
+
     (safe, partitions)
 }
 
@@ -73,10 +78,8 @@ fn pick_axis<O: BaseNum, L: BaseNum>(
     rect: &Rectangle<O, L>,
     k_deoblongification: f32,
 ) -> Axis {
-    // Weights swap axes because the longer the *opposite* axis is,
-    // the more weight *this* axis should have.
-    let w_weight = rect.h.to_f32().unwrap().powf(k_deoblongification);
-    let h_weight = rect.w.to_f32().unwrap().powf(k_deoblongification);
+    let h_weight = rect.h.to_f32().unwrap().powf(k_deoblongification);
+    let w_weight = rect.w.to_f32().unwrap().powf(k_deoblongification);
 
     let p_horiz = w_weight / (w_weight + h_weight);
 
@@ -89,12 +92,12 @@ fn pick_axis<O: BaseNum, L: BaseNum>(
 
 pub fn make_partition(
     r: &Rectangle<isize, usize>,
-    p: f32,
+    ratio: f32,
     axis: Axis,
 ) -> (Rectangle<isize, usize>, Line, Rectangle<isize, usize>) {
     match axis {
         Axis::Horizontal => {
-            let w1 = (r.w as f32 * p) as usize;
+            let w1 = (r.w as f32 * ratio) as usize;
             let r1 = Rectangle {
                 x: r.x,
                 y: r.y,
@@ -108,15 +111,15 @@ pub fn make_partition(
                 h: r.h,
             };
             let p = Line {
-                start: r.y,
-                end: r.y + r.h as isize,
-                offset: r.x + w1 as isize,
-                axis: Axis::Horizontal,
+                x: r.x + w1 as isize,
+                y: r.y,
+                length: r.h,
+                axis: Axis::Vertical,
             };
             (r1, p, r2)
         }
         Axis::Vertical => {
-            let h1 = (r.h as f32 * p) as usize;
+            let h1 = (r.h as f32 * ratio) as usize;
             let r1 = Rectangle {
                 x: r.x,
                 y: r.y,
@@ -124,16 +127,16 @@ pub fn make_partition(
                 h: h1,
             };
             let r2 = Rectangle {
-                x: r.x + h1 as isize,
-                y: r.y,
+                x: r.x,
+                y: r.y + h1 as isize,
                 w: r.w,
                 h: r.h - h1,
             };
             let p = Line {
-                start: r.x,
-                end: r.x + r.w as isize,
-                offset: r.y + h1 as isize,
-                axis: Axis::Vertical,
+                x: r.x,
+                y: r.y + h1 as isize,
+                length: r.w,
+                axis: Axis::Horizontal,
             };
             (r1, p, r2)
         }
@@ -184,19 +187,81 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::util::Rectangle;
+    use crate::util::{Line, Rectangle};
 
     use super::*;
 
-    fn foo() {
-        partition(
-            Rectangle {
-                x: 3.0,
-                y: 5.0,
-                w: 10.0,
-                h: 8.0,
+    #[test]
+    fn do_make_partition() {
+        let r = make_partition(
+            &Rectangle {
+                x: 2,
+                y: 5,
+                w: 10,
+                h: 8,
             },
-            vec![0.1, 0.5, 0.7],
+            0.5,
+            Axis::Horizontal,
         );
+
+        let expected = (
+            Rectangle {
+                x: 2,
+                y: 5,
+                w: 5,
+                h: 8,
+            },
+            Line {
+                x: 7,
+                y: 5,
+                length: 8,
+                axis: Axis::Vertical,
+            },
+            Rectangle {
+                x: 7,
+                y: 5,
+                w: 5,
+                h: 8,
+            },
+        );
+
+        assert_eq!(r, expected);
+    }
+
+    #[test]
+    fn do_make_partition_vert() {
+        let r = make_partition(
+            &Rectangle {
+                x: 2,
+                y: 5,
+                w: 10,
+                h: 8,
+            },
+            0.5,
+            Axis::Vertical,
+        );
+
+        let expected = (
+            Rectangle {
+                x: 2,
+                y: 5,
+                w: 10,
+                h: 4,
+            },
+            Line {
+                x: 2,
+                y: 9,
+                length: 10,
+                axis: Axis::Horizontal,
+            },
+            Rectangle {
+                x: 2,
+                y: 9,
+                w: 10,
+                h: 4,
+            },
+        );
+
+        assert_eq!(r, expected);
     }
 }
